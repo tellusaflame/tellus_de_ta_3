@@ -18,10 +18,10 @@ CREATE TABLE IF NOT EXISTS json_data (
   userid INT NOT NULL,
   platform text NOT NULL,
   durationms INT,
-  position INT,
-  timestamp timestamp NOT NULL,
-  _group INT[],
-  _user INT[],
+  feed_position INT,
+  ts timestamp NOT NULL,
+  owners_group INT[],
+  owners_user INT[],
   post INT[],
   movie INT[],
   user_photo INT[],
@@ -37,7 +37,7 @@ pip install -r requirements.txt
 
 В результате выполнения скрипта JSON данные будут вставлены в таблицу `json_data`:
 
-| userid | platform | durationms | position | timestamp | \_group | \_user | post | movie | user\_photo | group\_photo |
+| userid | platform | durationms | feed\_position | ts | owners\_group | owners\_user | post | movie | user\_photo | group\_photo |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 37686 | APP\_ANDROID | 1150 | 4 | 2019-09-12 19:47:06.000000 | null | null | null | null | null | null |
 | 21783 | APP\_ANDROID | 3717 | 155 | 2019-09-12 15:02:31.000000 | {21055} | null | {39194} | {44250} | null | null |
@@ -49,21 +49,20 @@ pip install -r requirements.txt
 | 15900 | APP\_ANDROID | 1381 | 34 | 2019-09-12 05:27:02.000000 | null | {31900} | null | null | {3698} | null |
 | 50581 | APP\_ANDROID | 45960 | 31 | 2019-09-12 18:50:46.000000 | null | null | null | null | null | null |
 | 50302 | APP\_ANDROID | 1288 | 391 | 2019-09-12 12:12:38.000000 | {32831} | null | {45704} | null | null | {50624} |
-
 ---
 
 ### Получение метрики
 * Количество показов и уникальных пользователей за день в разрезе по платформам:
 ```sql
-SELECT DISTINCT "platform" as Платформа
-          ,DATE(timestamp) as Дата
-          ,COUNT(*) as Показы
-          ,COUNT(DISTINCT userid) as Уникальные_пользователи
-FROM json_data
-GROUP BY Платформа, Дата
-ORDER BY Дата, Платформа
+select distinct "platform" as platform
+          ,date(ts) as date
+          ,count(*) as uniq_shows
+          ,count(distinct userid) as uniq_users
+from json_data
+group by platform, date
+order by date, platform
 ```
-| Платформа | Дата | Показы | Уникальные\_пользователи |
+| platform | date | uniq\_shows | uniq\_users |
 | :--- | :--- | :--- | :--- |
 | APP\_ANDROID | 2019-09-11 | 834 | 9 |
 | APP\_IOS | 2019-09-11 | 128 | 1 |
@@ -78,91 +77,95 @@ ORDER BY Дата, Платформа
 
 * Количество показов и уникальных пользователей за день по всем платформам:
 ```sql
-SELECT DISTINCT DATE(timestamp) as Дата
-       ,COUNT(*) as Показы_по_всем_платформам
-       ,COUNT(DISTINCT userid) as Уникальные_пользователи
-FROM json_data
-GROUP BY Дата
+select distinct date(ts) as date
+       ,count(*) as shows_all_platforms
+       ,count(distinct userid) as uniq_users
+from json_data
+group by date
 ```
-| Дата | Показы\_по\_всем\_платформам | Уникальные\_пользователи |
+| date | shows\_all\_platforms | uniq\_users |
 | :--- | :--- | :--- |
 | 2019-09-11 | 1064 | 12 |
 | 2019-09-12 | 33254 | 199 |
 
 * Количество за день уникальных авторов и уникального контента, показанного в ленте:
 ```sql
-SELECT DATE(timestamp) as Дата,
-         COUNT(DISTINCT _user) as Уник_Авторы_Польз
-        ,COUNT(DISTINCT _group) as Уник_Авторы_Группы
-        ,COUNT(DISTINCT _post) as Уник_Посты
-        ,COUNT(DISTINCT _movie) as Уник_Видео
-        ,COUNT(DISTINCT user_p) as Уник_Польз_Фото
-        ,COUNT(DISTINCT group_p) as Уник_Груп_Фото
-FROM json_data jd
-LEFT JOIN LATERAL unnest("post") _post ON true
-LEFT JOIN LATERAL unnest("movie") _movie ON true
-LEFT JOIN LATERAL unnest("user_photo") user_p ON true
-LEFT JOIN LATERAL unnest("group_photo") group_p ON true
-GROUP BY Дата
+select date(ts) as date
+        ,count(distinct owners_user) as uniq_author_user
+        ,count(distinct owners_group) as uniq_author_group
+        ,count(distinct _post) as uniq_posts
+        ,count(distinct _movie) as uniq_video
+        ,count(distinct user_p) as uniq_user_photo
+        ,count(distinct group_p) as uniq_group_photo
+from json_data jd
+left join lateral unnest("post") _post on true
+left join lateral unnest("movie") _movie on true
+left join lateral unnest("user_photo") user_p on true
+left join lateral unnest("group_photo") group_p on true
+group by date
 ```
-| Дата | Уник\_Авторы\_Польз | Уник\_Авторы\_Группы | Уник\_Посты | Уник\_Видео | Уник\_Польз\_Фото | Уник\_Груп\_Фото |
+| date | uniq\_author\_user | uniq\_author\_group | uniq\_posts | uniq\_video | uniq\_user\_photo | uniq\_group\_photo |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2019-09-11 | 295 | 104 | 427 | 178 | 491 | 542 |
 | 2019-09-12 | 9260 | 1669 | 11300 | 3629 | 19443 | 10632 |
 
 * Количество сессий за день:
 ```sql
-SELECT DATE(timestamp) as Дата
-        ,COUNT(*) as Сессии FROM json_data
-GROUP BY Дата
+select date(ts) as date
+        ,count(*) as sessions from json_data
+group by date
 ```
-| Дата | Сессии |
+| date | sessions |
 | :--- | :--- |
 | 2019-09-11 | 1064 |
 | 2019-09-12 | 33254 |
 
 * Средняя глубина просмотра (по позиции фида):
 ```sql
-CREATE EXTENSION IF NOT EXISTS tablefunc;
-CREATE TEMP TABLE IF NOT EXISTS tbl AS
+create extension if not exists tablefunc;
+create temp table if not exists tbl as
 
-select DATE(timestamp) as Дата
-        ,position as Позиция_фида
-        ,userid as Пользователь
-        ,COUNT(*) as Количество_просмотров
+select date(ts) as date
+        ,feed_position as feed_position
+        ,userid as users
+        ,count(*) as cnt_views
 from json_data
-where position is not null
-group by Дата, Пользователь, Позиция_фида
-order by Дата, Позиция_фида, Пользователь
+where feed_position is not null
+group by date, users, feed_position
+order by date, feed_position, users
 
-SELECT *
-FROM crosstab(
-         $$SELECT Позиция_фида
-       , Дата
-         , ROUND(SUM(Количество_просмотров) / COUNT(Пользователь), 2) as Результат
-FROM tbl
-GROUP BY Дата, Позиция_фида
-        ORDER BY Позиция_фида, Дата$$
+select *
+from crosstab(
+         $$select feed_position
+       , date
+         , round(sum(cnt_views) / count(users), 2) as result
+from tbl
+group by date, feed_position
+        order by feed_position, date$$
      )
-AS cst("Позиция_фида" integer, "2019-09-11" numeric, "2019-09-12" numeric)
+as cst("feed_position" integer, "2019-09-11" numeric, "2019-09-12" numeric)
 ```
-| Позиция\_фида | 2019-09-11 | 2019-09-12 |
-|:--------------|:-----------|:-----------|
-| 1             | 2.27       | 4.95       |
-| 2             | 1.44       | 4.16       |
-| 3             | 1.22       | 3.72       |
-| 4             | 1.22       | 3.61       |
-| ...           | ...        | ...        |
-| 616           | 1          | null       |
+| feed\_position | 2019-09-11 | 2019-09-12 |
+| :--- | :--- | :--- |
+| 1 | 2.27 | 4.95 |
+| 2 | 1.44 | 4.16 |
+| 3 | 1.22 | 3.72 |
+| 4 | 1.22 | 3.61 |
+| 5 | 1.22 | 3.26 |
+| 6 | 1.63 | 3.22 |
+| 7 | 1.57 | 3.28 |
+| 8 | 1.5 | 3.26 |
+| 9 | 1.43 | 3.49 |
+| 10 | 2.14 | 3.64 |
 
 * Средняя продолжительность пользовательской сессии в ленте за день:
 ```sql
-SELECT DISTINCT DATE(timestamp) as Дата
-        ,ROUND(SUM(durationms)/COUNT(*),0) as Сред_Сессия_Ms
-    FROM json_data
-    GROUP BY Дата
+select distinct date(ts) as date
+        ,round(sum(durationms)/count(*),0) as avg_session_ms
+    from json_data
+    group by date
 ```
-| Дата | Сред\_Сессия\_ms |
+| date | avg\_session\_ms |
 | :--- | :--- |
 | 2019-09-11 | 24786 |
 | 2019-09-12 | 27538 |

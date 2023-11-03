@@ -1,20 +1,7 @@
-import os
-
 import psycopg2
-from psycopg2 import extras
 import pandas as pd
-
-from dotenv import load_dotenv
-
-load_dotenv()
-
-postgres_secrets = {
-    "host": os.getenv("POSTGRES_HOST"),
-    "port": os.getenv("POSTGRES_PORT"),
-    "user": os.getenv("POSTGRES_USER"),
-    "password": os.getenv("POSTGRES_PASSWORD"),
-    "database": os.getenv("POSTGRES_DB"),
-}
+from psycopg2 import extras
+from utils import postgres_secrets
 
 
 def create_cursor(**secrets):
@@ -29,14 +16,13 @@ def create_cursor(**secrets):
     return cursor, connection
 
 
-def json_to_df(json: str):
-    stock_df = pd.read_json(json, lines=True)
+def json_to_df(json_path: str) -> pd.DataFrame:
+    stock_df = pd.read_json(json_path, lines=True)
 
     owners_df = pd.json_normalize(stock_df["owners"])
     resources_df = pd.json_normalize(stock_df["resources"])
 
-    stock_df = stock_df.drop("owners", axis=1)
-    stock_df = stock_df.drop("resources", axis=1)
+    stock_df = stock_df.drop(["owners", "resources"], axis=1)
 
     df = pd.concat([stock_df, owners_df, resources_df], axis=1)
 
@@ -48,8 +34,10 @@ def json_to_df(json: str):
             "MOVIE": "movie",
             "USER_PHOTO": "user_photo",
             "GROUP_PHOTO": "group_photo",
-            "group": "_group",
-            "user": "_user",
+            "group": "owners_group",
+            "user": "owners_user",
+            "position": 'feed_position',
+            "timestamp": 'ts',
         },
         inplace=True,
     )
@@ -57,26 +45,20 @@ def json_to_df(json: str):
     return df
 
 
-def df_to_db(conn, cursor, df):
-    cursor.execute(""" TRUNCATE json_data """)
-    conn.commit()
+def df_to_db(conn, cursor, df: pd.DataFrame,):
+    with conn as conn:
+        with cursor as cursor:
+            cursor.execute(""" TRUNCATE json_data """)
 
-    tuples = [tuple(x) for x in df.to_numpy(na_value=None)]
+            tuples = [tuple(x) for x in df.to_numpy(na_value=None)]
 
-    cols = ",".join(list(df.columns))
+            cols = ",".join(list(df.columns))
 
-    query = "INSERT INTO %s(%s) VALUES %%s" % ("json_data", cols)
-    try:
-        extras.execute_values(cursor, query, tuples)
-        conn.commit()
-    except (Exception, psycopg2.DatabaseError) as error:
-        print("Error: %s" % error)
-        conn.rollback()
-        cursor.close()
+            query = "INSERT INTO %s(%s) VALUES %%s" % ("json_data", cols)
+            extras.execute_values(cursor, query, tuples)
 
-    print("the dataframe is inserted")
-    cursor.close()
-
+            print("the dataframe is inserted")
+    conn.close()
 
 def main():
     df = json_to_df("feeds_show.json")
