@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS json_data (
 
 Также необходимо установить требуемые зависимости:
 ```console
+python3 -m venv venv
+venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
@@ -54,12 +56,13 @@ pip install -r requirements.txt
 ### Получение метрики
 * Количество показов и уникальных пользователей за день в разрезе по платформам:
 ```sql
-select distinct "platform" as platform
-          ,date(ts) as date
-          ,count(*) as uniq_shows
-          ,count(distinct userid) as uniq_users
+select
+        platform
+        ,ts::date as date
+        ,count(*) as uniq_shows
+        ,count(distinct userid) as uniq_users
 from json_data
-group by platform, date
+group by date, platform
 order by date, platform
 ```
 | platform | date | uniq\_shows | uniq\_users |
@@ -74,10 +77,11 @@ order by date, platform
 | DESKTOP\_WEB | 2019-09-12 | 10266 | 54 |
 | MOBILE\_WEB | 2019-09-12 | 1362 | 16 |
 
-
+---
 * Количество показов и уникальных пользователей за день по всем платформам:
 ```sql
-select distinct date(ts) as date
+select
+        ts::date as date
        ,count(*) as shows_all_platforms
        ,count(distinct userid) as uniq_users
 from json_data
@@ -87,10 +91,11 @@ group by date
 | :--- | :--- | :--- |
 | 2019-09-11 | 1064 | 12 |
 | 2019-09-12 | 33254 | 199 |
-
+---
 * Количество за день уникальных авторов и уникального контента, показанного в ленте:
 ```sql
-select date(ts) as date
+select 
+        ts::date as date
         ,count(distinct owners_user) as uniq_author_user
         ,count(distinct owners_group) as uniq_author_group
         ,count(distinct _post) as uniq_posts
@@ -108,10 +113,11 @@ group by date
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 | 2019-09-11 | 295 | 104 | 427 | 178 | 491 | 542 |
 | 2019-09-12 | 9260 | 1669 | 11300 | 3629 | 19443 | 10632 |
-
+---
 * Количество сессий за день:
 ```sql
-select date(ts) as date
+select 
+        ts::date as date
         ,count(*) as sessions from json_data
 group by date
 ```
@@ -119,48 +125,40 @@ group by date
 | :--- | :--- |
 | 2019-09-11 | 1064 |
 | 2019-09-12 | 33254 |
-
+---
 * Средняя глубина просмотра (по позиции фида):
 ```sql
-create extension if not exists tablefunc;
-create temp table if not exists tbl as
-
-select date(ts) as date
-        ,feed_position as feed_position
-        ,userid as users
-        ,count(*) as cnt_views
-from json_data
-where feed_position is not null
-group by date, users, feed_position
-order by date, feed_position, users
-
-select *
-from crosstab(
-         $$select feed_position
-       , date
-         , round(sum(cnt_views) / count(users), 2) as result
-from tbl
-group by date, feed_position
-        order by feed_position, date$$
-     )
-as cst("feed_position" integer, "2019-09-11" numeric, "2019-09-12" numeric)
+with views_and_users as (select ts::date               as date
+                              , feed_position          as feed_position
+                              , count(*)::decimal               as views
+                              , count(distinct userid)::decimal as uniq_users
+                         from json_data
+                         where feed_position is not null
+                         group by date, feed_position
+                         order by date, feed_position)
+select
+    date
+    ,feed_position
+    ,round(views/uniq_users, 2) as viewing_depth
+from views_and_users
 ```
-| feed\_position | 2019-09-11 | 2019-09-12 |
+| date | feed\_position | viewing\_depth |
 | :--- | :--- | :--- |
-| 1 | 2.27 | 4.95 |
-| 2 | 1.44 | 4.16 |
-| 3 | 1.22 | 3.72 |
-| 4 | 1.22 | 3.61 |
-| 5 | 1.22 | 3.26 |
-| 6 | 1.63 | 3.22 |
-| 7 | 1.57 | 3.28 |
-| 8 | 1.5 | 3.26 |
-| 9 | 1.43 | 3.49 |
-| 10 | 2.14 | 3.64 |
-
+| 2019-09-11 | 1 | 2.27 |
+| 2019-09-11 | 2 | 1.44 |
+| 2019-09-11 | 3 | 1.22 |
+| 2019-09-11 | 4 | 1.22 |
+| 2019-09-11 | 5 | 1.22 |
+| 2019-09-11 | 6 | 1.63 |
+| 2019-09-11 | 7 | 1.57 |
+| 2019-09-11 | 8 | 1.5 |
+| 2019-09-11 | 9 | 1.43 |
+| 2019-09-11 | 10 | 2.14 |
+---
 * Средняя продолжительность пользовательской сессии в ленте за день:
 ```sql
-select distinct date(ts) as date
+select 
+        ts::date as date
         ,round(sum(durationms)/count(*),0) as avg_session_ms
     from json_data
     group by date
